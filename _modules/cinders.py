@@ -4,6 +4,14 @@ import urllib
 import urllib2
 import json
 import os
+import salt.client
+import logging
+import time
+
+
+log = logging.getLogger(__name__)
+_service_type='cinderv2'
+
 
 
 
@@ -94,10 +102,11 @@ def Get_glances_list():
      return  result
 
 
-#获取云盘列表
-def  get_volumes_list(provider_name='test_opss',driver_name='nova'):
+#获取云盘列表(自动上报)
+def  get_volumes_list(provider_name='idc_test',
+                      driver_name='nova'):
      _service_type='cinderv2'
-     _url_keyword='/volumes'
+     _url_keyword='/volumes/detail'
      token=get_token(provider_name,driver_name,_service_type)
      if token['error']:
          return json.dumps({'flag':False, 'msg':'error::{0}'.format(token['error'][0])})
@@ -108,8 +117,55 @@ def  get_volumes_list(provider_name='test_opss',driver_name='nova'):
          req = urllib2.Request(url,data,headers)
          respones = urllib2.urlopen(req)
          result=json.loads(respones.read())
-     print  result
-     return json.dumps({'flag':True, 'msg':result})
+     for i in range(len(result['volumes'])):
+         result['volumes'][i]["os_vol_host_attr_host"]=result['volumes'][i].pop("os-vol-host-attr:host")
+         result['volumes'][i]["os_vol_mig_status_attr_migstat"]=result['volumes'][i].pop("os-vol-mig-status-attr:migstat")
+         result['volumes'][i]["os_vol_tenant_attr_tenant_id"]=result['volumes'][i].pop("os-vol-tenant-attr:tenant_id")
+         result['volumes'][i]["os_vol_mig_status_attr_name_id"]=result['volumes'][i].pop("os-vol-mig-status-attr:name_id")
+         for x,v  in result['volumes'][i].items():
+             if x == "bootable":
+                 if x:result['volumes'][i][x]=True
+                 else:result['volumes'][i][x]=False
+     return  result
+
+
+#获取云盘状态
+def get_volume_status(token,
+                      volume_url,
+                      headers):
+        data_result={"status":'',"error":[]}
+        i=300
+        data=None
+        req = urllib2.Request(volume_url,data,headers)
+        try:
+            while i > 1:                    
+                 respones = urllib2.urlopen(req)
+                 result=json.loads(respones.read())    
+                 if result['volume']["status"] == 'available':
+                     status=result['volume']["status"]
+                     data_result["status"]=status
+                     break                              
+                 time.sleep(1)
+                 i-=1
+        except Exception,e:
+                data_result["error"].append(e)
+                return data_result
+        return data_result
+
+
+#run_volume_async
+def  run_volume_async(result,post_url):
+     RET = 'create_volume_callback'
+     TGT = 'master-minion'
+     FUN = 'cmd.run'
+     LOCAL = salt.client.LocalClient()
+     kwarg={
+         "cmd":'date',
+         "result":result,
+         "post_url":post_url
+     }
+     ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
+     return ret
 
 #创建云盘列表
 def create_volumes(size=1,
@@ -145,10 +201,15 @@ def create_volumes(size=1,
          req = urllib2.Request(url,data,headers)
          respones = urllib2.urlopen(req)
          result=json.loads(respones.read())
-     print  result
-     return json.dumps({'flag':True, 'msg':result})
-
-
+         volume_url=result['volume']['links'][0]["href"]
+         volume_status_result=get_volume_status(token,volume_url,headers)
+         if volume_status_result["error"]:
+                 result={'flag':False, 'msg':volume_status_result['error'][0]}
+                 return result
+         result["volume"]['status']=volume_status_result['status']
+         run_volume_async(result,post_url="192.168.0.1")
+         return result
+         
 def op_volume(provider_name='idc_test',
                   driver_name='nova',
                   volume_id='ed80b7d2-f40c-4cdc-bfa7-eb3d266ce7a4',
@@ -186,3 +247,50 @@ def op_volume(provider_name='idc_test',
                           result="detach success!!!"
                    else:result=json.loads(respones.read())
                    return json.dumps({'flag':True, 'msg':result})
+
+
+#批量删除卷
+def delete_volumes(volume_id,
+                   provider_name='idc_test',
+                   driver_name='nova'):
+          data_result={"error":[]}
+          _url_keyword='/volumes/%s'%volume_id
+          token=get_token(provider_name,driver_name,_service_type)
+          if token['error']:
+                     return  {'flag':False, 'msg':'error::{0}'.format(token['error'][0])}
+          else:
+                 headers={"Content-type":"application/json","Accept": "application/json","X-Auth-Token":token['auth_token']}
+                 url="%s%s"%(token['publicURL'],_url_keyword)
+                 try:
+                       data = json.dumps(params)
+                 except Exception,e:
+                       data = None 
+                 try:
+                      req = urllib2.Request(url,data,headers)
+                      req.get_method = lambda:'DELETE'
+                      respones = urllib2.urlopen(req)                 
+                 except urllib2.HTTPError,e:
+                      e_read=json.loads(e.read())
+                      data_result['error'].append(e_read)
+                      return {'flag':False,"msg":data_result}
+                 else:
+                      return {'flag':True}
+             
+#salt 异步操作格式
+def abcd():
+     RET = 'menkeyi_callback'
+     TGT = 'master-minion'
+     FUN = 'cmd.run'
+     #id = kwargs.pop('jid')
+     LOCAL = salt.client.LocalClient()
+     #kwarg={
+     #    "volume_id":"aaaaaaaaaaaaaaaaa",
+     #    "id":id
+     #}
+     kwarg={
+         "cmd":"echo 11111",
+         "aaa":"menkeyi"
+     }
+     ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
+     return ret
+
