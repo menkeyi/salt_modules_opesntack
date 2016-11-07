@@ -138,13 +138,13 @@ def get_volume_status(token,
         data=None
         req = urllib2.Request(volume_url,data,headers)
         try:
-            while i > 1:                    
+            while i > 1:
                  respones = urllib2.urlopen(req)
-                 result=json.loads(respones.read())    
-                 if result['volume']["status"] == 'available':
+                 result=json.loads(respones.read())
+                 if result['volume']["status"] == 'available' or result['volume']["status"]=="error":
                      status=result['volume']["status"]
                      data_result["status"]=status
-                     break                              
+                     break
                  time.sleep(1)
                  i-=1
         except Exception,e:
@@ -154,7 +154,7 @@ def get_volume_status(token,
 
 
 #run_volume_async
-def  run_volume_async(result,post_url):
+def  run_volume_async(result,post_url,id_,jid):
      RET = 'create_volume_callback'
      TGT = 'master-minion'
      FUN = 'cmd.run'
@@ -162,16 +162,21 @@ def  run_volume_async(result,post_url):
      kwarg={
          "cmd":'date',
          "result":result,
-         "post_url":post_url
+         "post_url":post_url,
+         "id":id_,
+         "jid":jid,
      }
-     ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
+     ret = LOCAL.cmd(TGT, FUN,ret=RET,jid=jid,kwarg=kwarg)
      return ret
 
 #创建云盘列表
-def create_volumes(size=1,
-                   provider_name='test_opss',
+def create_volumes(id_,
+                   post_url,
+                   provider_name,
+                   jid=None,
                    driver_name='nova',
-                   name='test000001',
+                   size=1,
+                   name=None,
                    description=None,
                    source_volid=None,
                    volume_type=None,
@@ -180,10 +185,12 @@ def create_volumes(size=1,
                    source_replica=None,
                    consistencygroup_id=None,
                    multiattach=False,
-                   snapshot_id=None):
-     
+                   snapshot_id=None,):
+     from hashlib import sha1
+     import os
 
 
+     if not jid:jid=sha1('%s%s' % (os.urandom(16), time.time())).hexdigest()
      _service_type='cinderv2'
      _url_keyword='/volumes'
      params={"volume":{"size":size,"availability_zone": availability_zone,"source_volid":source_volid,"description":description,"multiattach ":multiattach,"snapshot_id": snapshot_id,"name": name,"imageRef": imageRef,"volume_type": volume_type,"metadata": {},"source_replica": source_replica,"consistencygroup_id":consistencygroup_id }}
@@ -207,7 +214,7 @@ def create_volumes(size=1,
                  result={'flag':False, 'msg':volume_status_result['error'][0]}
                  return result
          result["volume"]['status']=volume_status_result['status']
-         run_volume_async(result,post_url="192.168.0.1")
+         run_volume_async(result,post_url,id_,jid)
          return result
          
 def op_volume(provider_name='idc_test',
@@ -249,7 +256,7 @@ def op_volume(provider_name='idc_test',
                    return json.dumps({'flag':True, 'msg':result})
 
 
-#批量删除卷
+#删除卷
 def delete_volumes(volume_id,
                    provider_name='idc_test',
                    driver_name='nova'):
