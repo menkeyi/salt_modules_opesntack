@@ -1,12 +1,13 @@
 #_*_coding:utf8_*_
 #!/usr/bin/env python
-import urllib
 import urllib2
 import json
 import os
 import salt.client
 import logging
 import time
+import salt.utils
+from hashlib import sha1
 
 
 log = logging.getLogger(__name__)
@@ -14,12 +15,27 @@ _service_type='cinderv2'
 
 
 
+#参数处理
+def validate(local_argv,kwargs):
+       if kwargs:extra_fun=set(kwargs)-set(local_argv)
+       for k,v in local_argv.items():
+            if v == None or v == True or v == False :continue
+            local_argv[k]=v.strip()
+            if v.strip() == "True" or v.strip() == "true":local_argv[k]=True
+            elif v.strip() == "False" or v.strip() == "false":local_argv[k]=False
+            elif v.strip() == "" :local_argv[k]=None
+       try:
+            local_argv["extra_fun"]=list(extra_fun) 
+       except Exception,e:
+            pass
+       return local_argv
+   
 
-#测试
-def abc():
-   aaaa='aa'
-   return "aaaaaaaaaaa"
-
+def print_log(argv):
+      log_path='/tmp/volume.log'       
+      with salt.utils.fopen(log_path, 'a+') as fp_:
+                            for i in argv:
+                                 fp_.write("%s:\n%s\n"%(i,argv[i]))
 
 #获取Provider信息
 def get_Provider_info(provider_name='test_opss',driver_name='nova'):
@@ -33,6 +49,7 @@ def get_Provider_info(provider_name='test_opss',driver_name='nova'):
             identity_url,user,password,tenant,=pro_info[provider_name]['identity_url'],pro_info[provider_name]['user'],pro_info[provider_name]['password'],pro_info[provider_name]['tenant']
         except Exception,e:
                    data['error'].append(e)
+                   data['error'].append(provider_name)
                    return  data
         else:
                  for i in 'user','password','tenant','identity_url':
@@ -54,7 +71,7 @@ def get_serviceCatalog(obj_service,service_type):
 
 
 #获取token
-def get_token(provider_name='test_opss',driver_name='nova',service_type='glance'):
+def get_token(provider_name,service_type,driver_name='nova'):
    data={'data':[],'error':[]}
    _url_keyword='/tokens'
    #username,password,url,tenan_user=Get_Provider_info(provider_name,driver_name)
@@ -105,9 +122,8 @@ def Get_glances_list():
 #获取云盘列表(自动上报)
 def  get_volumes_list(provider_name='idc_test',
                       driver_name='nova'):
-     _service_type='cinderv2'
      _url_keyword='/volumes/detail'
-     token=get_token(provider_name,driver_name,_service_type)
+     token=get_token(provider_name,_service_type,driver_name)
      if token['error']:
          return json.dumps({'flag':False, 'msg':'error::{0}'.format(token['error'][0])})
      else:
@@ -138,13 +154,13 @@ def get_volume_status(token,
         data=None
         req = urllib2.Request(volume_url,data,headers)
         try:
-            while i > 1:
+            while i > 1:                    
                  respones = urllib2.urlopen(req)
-                 result=json.loads(respones.read())
+                 result=json.loads(respones.read())    
                  if result['volume']["status"] == 'available' or result['volume']["status"]=="error":
                      status=result['volume']["status"]
                      data_result["status"]=status
-                     break
+                     break                              
                  time.sleep(1)
                  i-=1
         except Exception,e:
@@ -170,8 +186,8 @@ def  run_volume_async(result,post_url,id_,jid):
      return ret
 
 #创建云盘列表
-def create_volumes(id_,
-                   post_url,
+def create_volumes(volume_id,
+                   callback,
                    provider_name,
                    jid=None,
                    driver_name='nova',
@@ -185,18 +201,25 @@ def create_volumes(id_,
                    source_replica=None,
                    consistencygroup_id=None,
                    multiattach=False,
-                   snapshot_id=None,):
-     from hashlib import sha1
-     import os
-
-
-     if not jid:jid=sha1('%s%s' % (os.urandom(16), time.time())).hexdigest()
-     _service_type='cinderv2'
+                   snapshot_id=None,
+                   **kwargs):
+     
+     local_argv=locals()
+     if kwargs:
+         kwargs=local_argv.pop("kwargs")["__pub_arg"][0]
+     else:kwargs={}
+     local_argv=validate(local_argv,kwargs)
+     print_log(local_argv)
+     try:
+          local_argv["extra_fun"]
+     except Exception:
+            pass
+     if not jid:jid=sha1('%s%s' % (os.urandom(16), time.time())).hexdigest()  
      _url_keyword='/volumes'
-     params={"volume":{"size":size,"availability_zone": availability_zone,"source_volid":source_volid,"description":description,"multiattach ":multiattach,"snapshot_id": snapshot_id,"name": name,"imageRef": imageRef,"volume_type": volume_type,"metadata": {},"source_replica": source_replica,"consistencygroup_id":consistencygroup_id }}
-     token=get_token(provider_name,driver_name,_service_type)
+     params={"volume":{"size":local_argv['size'],"availability_zone": local_argv['availability_zone'],"source_volid":local_argv['source_volid'],"description":local_argv['description'],"multiattach ":local_argv['multiattach'],"snapshot_id": local_argv['snapshot_id'],"name": local_argv['name'],"imageRef": local_argv['imageRef'],"volume_type": local_argv['volume_type'],"metadata": {},"source_replica": local_argv['source_replica'],"consistencygroup_id":local_argv['consistencygroup_id']}}
+     token=get_token(provider_name,_service_type,driver_name)
      if token['error']:
-         return  json.dumps({'flag':False, 'msg':'error::{0}'.format(token['error'][0])})
+         return  {'flag':False, 'msg':'error::{0}'.format(token['error'][0])}
      else:
          headers={"Content-type":"application/json","Accept": "application/json","X-Auth-Token":token['auth_token']}
          url="%s%s"%(token['publicURL'],_url_keyword)
@@ -210,28 +233,32 @@ def create_volumes(id_,
          result=json.loads(respones.read())
          volume_url=result['volume']['links'][0]["href"]
          volume_status_result=get_volume_status(token,volume_url,headers)
-         if volume_status_result["error"]:
-                 result={'flag':False, 'msg':volume_status_result['error'][0]}
-                 return result
-         result["volume"]['status']=volume_status_result['status']
-         run_volume_async(result,post_url,id_,jid)
-         return result
-         
-def op_volume(provider_name='idc_test',
-                  driver_name='nova',
-                  volume_id='ed80b7d2-f40c-4cdc-bfa7-eb3d266ce7a4',
-                  instance_id='2603fc92-d6e7-4890-b64c-e3879981d81b',
-                  op='attach',
-                  device=None):
+         if volume_status_result['status'] == 'error':
+                 result={'flag':False, 'status':'error'}
+                 #return result
+         else:result={'flag':True, 'status':'available'}
+         #result["volume"]['status']=volume_status_result['status']
+         print_log(result)
+         run_volume_async(result,callback,volume_id,jid)
+         return volume_id
+         # return local_argv
+#挂载卸载云盘         
+def op_volume(provider_name,
+              volume_id,
+              instance_id,
+              op='attach',
+              device=None,
+              driver_name='nova'):
+    local_argv=locals()
     _service_type='nova'
     if op == 'attach':
            _url_keyword='/servers/%s/os-volume_attachments'% instance_id
            params={"volumeAttachment":{"volumeId":volume_id,"device": device} }
     else:_url_keyword='/servers/%s/os-volume_attachments/%s'% (instance_id,volume_id)
     data_result={'data':[],'error':[]}
-    token=get_token(provider_name,driver_name,_service_type)
+    token=get_token(provider_name,_service_type,driver_name)
     if token['error']:
-         return json.dumps({'flag':False, 'msg':'error::{0}'.format(token['error'][0])})
+         return {'flag':False, 'msg':'error::{0}'.format(token['error'][0])}
     else: 
          headers={'X-Auth-Token':token['auth_token'],'Content-Type':'application/json'}
          url="%s%s"%(token['publicURL'],_url_keyword)
@@ -248,21 +275,26 @@ def op_volume(provider_name='idc_test',
                        respones = urllib2.urlopen(req)
          except urllib2.HTTPError,e:      
                    data_result['error'].append({e.code:e.read()})
+                   local_argv['error']=data_result['error'][0]
+                   print_log(local_argv)                
                    return json.dumps({'flag':False, 'msg':data_result['error'][0]})
          else:     
                    if op == 'detach':
-                          result="detach success!!!"
-                   else:result=json.loads(respones.read())
+                          result='detach success!!!'
+                   else:
+                          result=respones.read()
+                          local_argv['result']=result
+                          print_log(local_argv)
                    return json.dumps({'flag':True, 'msg':result})
 
 
 #删除卷
 def delete_volumes(volume_id,
-                   provider_name='idc_test',
-                   driver_name='nova'):
+                   provider_name,
+                   driver_name):
           data_result={"error":[]}
           _url_keyword='/volumes/%s'%volume_id
-          token=get_token(provider_name,driver_name,_service_type)
+          token=get_token(provider_name,_service_type,driver_name)
           if token['error']:
                      return  {'flag':False, 'msg':'error::{0}'.format(token['error'][0])}
           else:
@@ -281,8 +313,7 @@ def delete_volumes(volume_id,
                       data_result['error'].append(e_read)
                       return {'flag':False,"msg":data_result}
                  else:
-                      return {'flag':True}
-             
+                      return {'flag':True}            
 #salt 异步操作格式
 def abcd():
      RET = 'menkeyi_callback'
@@ -301,3 +332,6 @@ def abcd():
      ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
      return ret
 
+def test():
+   ni=set({"aa":"bb","cc":"ac"})-set({"aa":"bb"})
+   return  dict(ni)
