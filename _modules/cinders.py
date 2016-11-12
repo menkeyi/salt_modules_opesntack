@@ -332,6 +332,3 @@ def abcd():
      ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
      return ret
 
-def test():
-   ni=set({"aa":"bb","cc":"ac"})-set({"aa":"bb"})
-   return  dict(ni)
