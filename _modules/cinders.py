@@ -31,6 +31,7 @@ def validate(local_argv,kwargs):
        return local_argv
    
 
+#打印日志
 def print_log(argv):
       log_path='/tmp/volume.log'       
       with salt.utils.fopen(log_path, 'a+') as fp_:
@@ -38,7 +39,7 @@ def print_log(argv):
                                  fp_.write("%s:\n%s\n"%(i,argv[i]))
 
 #获取Provider信息
-def get_Provider_info(provider_name='test_opss',driver_name='nova'):
+def get_Provider_info(provider_name,driver_name='nova'):
         import yaml
         data={'data':[],'error':[]}
         file_name='%s_%s.conf'%(provider_name,driver_name)
@@ -99,28 +100,10 @@ def get_token(provider_name,service_type,driver_name='nova'):
    return data_dic
 
 
-#获取镜像列表
-def Get_glances_list():
-     _service_type='glance'
-     _url_keyword='/v2.0/images'
-     #token=get_token('http://10.20.100.3:5000/v2.0/tokens','admin','admin','admin',_service_type)
-     token=get_token(_service_type)
-     if token['error']>0:
-         return json.dumps({'flag':False, 'msg':token['error']})
-     else:
-         headers={'X-Auth-Token':token['auth_token']}
-         url="%s%s"%(token['publicURL'],_url_keyword)
-         data = None
-         req = urllib2.Request(url,data,headers)
-         respones = urllib2.urlopen(req)
-         result=json.loads(respones.read())
-         for img in result['images']:
-             print img['name']
-     return  result
 
 
 #获取云盘列表(自动上报)
-def  get_volumes_list(provider_name='idc_test',
+def  get_volumes_list(provider_name,
                       driver_name='nova'):
      _url_keyword='/volumes/detail'
      token=get_token(provider_name,_service_type,driver_name)
@@ -242,6 +225,9 @@ def create_volumes(volume_id,
          run_volume_async(result,callback,volume_id,jid)
          return volume_id
          # return local_argv
+
+
+
 #挂载卸载云盘         
 def op_volume(provider_name,
               volume_id,
@@ -331,7 +317,3 @@ def abcd():
      }
      ret = LOCAL.cmd(TGT, FUN, ret=RET,kwarg=kwarg)
      return ret
-
-def test():
-   ni=set({"aa":"bb","cc":"ac"})-set({"aa":"bb"})
-   return  dict(ni)
